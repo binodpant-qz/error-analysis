@@ -74,7 +74,43 @@ CAUSES = [
     ("unsupported", r"unimplemented|no \w+ inference mapping|unsupported"),
     ("bad_data", r"unmarshal|cannot be null|empty \w+|invalid|no line items"),
 ]
-CAUSE_WEIGHT = 3  # how many times the cause token is repeated in the document
+FOCUS_WEIGHT = 3  # how many times the preset's focus token is repeated in the document
+
+# Markers for the downstream system a segment of an error chain talks to. Checked
+# per segment from the leaf outwards, so the deepest call wins: "build zuora
+# subscription info: query by subscription number: deadline exceeded" is a DB failure.
+DEPENDENCIES = [
+    ("web_php", r"web-php|web_php|/rpc/"),
+    ("zuora", r"zuora|\bzms\b|submit order|by order"),
+    ("apple", r"appstoreapi|storekit|apple request|call apple"),
+    ("google_play", r"androidpublisher|googleapis|play developer"),
+    ("db", r"\bsql\b|psdb\.cloud|planetscale|begin tx|rollback|^query\b|insert \w+"),
+]
+# Provider API calls whose segment doesn't name the provider ("get subscription v2").
+# The provider comes from the rest of the chain.
+PROVIDER_CALL = r"get subscription v<n>"
+PROVIDER_CONTEXT = [
+    ("google_play", r"play store|rtdn|receipt|google"),
+    ("apple", r"apple|ios"),
+    ("zuora", r"zuora|\bzms\b"),
+]
+PRESETS = ("root_cause", "endpoint", "dependency")
+
+
+def dependency_of(message):
+    """Name the downstream system the deepest failing call in the chain talks to."""
+    if message == "(no message)":
+        return "unknown"
+    text = message.lower()
+    for segment in reversed(text.split(": ")):
+        for name, pat in DEPENDENCIES:
+            if re.search(pat, segment):
+                return name
+        if re.search(PROVIDER_CALL, segment):
+            for name, pat in PROVIDER_CONTEXT:
+                if re.search(pat, text):
+                    return name
+    return "internal"
 
 
 def cause_of(message):
@@ -89,16 +125,30 @@ def cause_of(message):
     return "other"
 
 
-def doc_for(sig):
-    """Text the vectorizer sees: error type, message template, endpoint words, status class."""
+def endpoint_token(endpoint):
+    return "ep_" + re.sub(r"[^a-z0-9]+", "_", endpoint.lower()).strip("_")
+
+
+def doc_for(sig, by="root_cause"):
+    """Text the vectorizer sees: the preset's focus token (repeated), failure mode,
+    error type, message template, endpoint words and status class."""
     route_words = " ".join(re.split(r"[^A-Za-z]+", " ".join(sig["endpoints"])))
     statuses = " ".join(f"status_{c} class_{c[:1]}xx" for c in sig["status_codes"])
     etype = re.sub(r"[^A-Za-z]+", " ", sig["error_type"])
     msg = "" if sig["message"] == "(no message)" else sig["message"]
     msg = re.sub(r"<\w+>", " ", msg)  # placeholders carry no meaning
     cause = sig.get("cause_hint") or cause_of(sig["message"])
-    cause_tokens = " ".join([f"cause_{cause}"] * CAUSE_WEIGHT) if cause else "cause_unknown"
-    return f"{cause_tokens} {etype} {msg} {route_words} {statuses}".lower()
+    cause_token = f"cause_{cause}" if cause else "cause_unknown"
+
+    if by == "endpoint":
+        top_endpoint = sig["endpoints"].most_common(1)[0][0]
+        focus = [endpoint_token(top_endpoint)] * FOCUS_WEIGHT + [cause_token]
+    elif by == "dependency":
+        focus = [f"dep_{dependency_of(sig['message'])}"] * FOCUS_WEIGHT + [cause_token]
+    else:
+        focus = [cause_token] * (FOCUS_WEIGHT if cause else 1)
+
+    return f"{' '.join(focus)} {etype} {msg} {route_words} {statuses}".lower()
 
 
 def weights(sigs, mode):
@@ -118,6 +168,8 @@ def main():
     ap.add_argument("--status-class", choices=["4xx", "5xx", "all"], default="all",
                     help="cluster only this status class")
     ap.add_argument("--weight", choices=["raw", "log", "none"], default="log")
+    ap.add_argument("--by", choices=PRESETS, default="root_cause",
+                    help="what the categories are about: failure mode, endpoint or downstream system")
     args = ap.parse_args()
 
     with open(args.input) as f:
@@ -131,7 +183,7 @@ def main():
     if n == 0:
         sys.exit("No signatures with errors in input.")
 
-    result = {"signatures": n, "total_errors": total, "weight": args.weight}
+    result = {"signatures": n, "total_errors": total, "by": args.by, "weight": args.weight}
 
     if n < 4:
         labels = list(range(n))
@@ -141,7 +193,7 @@ def main():
     else:
         vec = TfidfVectorizer(ngram_range=(1, 2), min_df=1, sublinear_tf=True,
                               stop_words="english", token_pattern=r"(?u)\b[a-z_][a-z0-9_]+\b")
-        X = vec.fit_transform([doc_for(s) for s in sigs])
+        X = vec.fit_transform([doc_for(s, args.by) for s in sigs])
         w = weights(sigs, args.weight)
         terms = np.array(vec.get_feature_names_out())
 
@@ -184,6 +236,7 @@ def main():
                 "signature": m["signature"], "issue_id": m["issue_id"],
                 "error_type": m["error_type"], "message": m["message"], "count": m["count"],
                 "cause": m.get("cause_hint") or cause_of(m["message"]),
+                "dependency": dependency_of(m["message"]),
                 "endpoints": [e for e, _ in m["endpoints"].most_common(3)],
             } for m in members],
         })

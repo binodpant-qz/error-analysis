@@ -24,6 +24,23 @@ Use whatever is provided and ask only for what is missing, in one prompt:
 | window | last 14 days |
 | status classes | 5xx; 4xx is opt-in |
 | env | prod |
+| cluster by | `root_cause` |
+
+**Cluster by** sets what the categories are about. Map the request to `--by`;
+don't ask unless the request names something outside this table.
+
+| User says | `--by` | Categories are |
+|---|---|---|
+| nothing, "by cause", "by failure", "what's going wrong" | `root_cause` | failure modes (timeout, conflict, not found, ...) |
+| "by endpoint", "by route", "per API", "which endpoints" | `endpoint` | endpoints, each with its mix of failures |
+| "by dependency", "by downstream", "by provider", "is it Zuora / Apple / Google / the DB" | `dependency` | the downstream system that failed |
+
+`dependency` reads each error chain from the leaf outwards and takes the deepest
+call it recognizes: `zuora`, `apple` (App Store API), `google_play` (Play Developer
+API), `db` (PlanetScale/SQL), `web_php` (monolith RPC). Errors that fail inside
+the service are `internal`; no-message errors are `unknown`, so a large `unknown`
+category means the chains are missing, not that nothing failed downstream.
+Each member in `clusters.json` carries its `dependency` whatever the preset.
 
 499 (client closed request) is excluded from clustering by default and reported
 as a single line, because it is usually client-side noise but can point at slow endpoints.
@@ -67,7 +84,7 @@ file or the report. The script also scrubs IDs, emails, IPs and numbers from mes
 
 ```bash
 pip install -r scripts/requirements.txt --break-system-packages   # if needed
-python scripts/cluster.py signatures.json --status-class 5xx --out clusters.json
+python scripts/cluster.py signatures.json --status-class 5xx --by root_cause --out clusters.json
 ```
 
 Cluster 5xx and 4xx in separate runs; mixed runs split on "has message vs not"
@@ -76,10 +93,10 @@ instead of failure mode.
 What it does: normalizes messages into templates (bracketed params, tokens,
 query strings, IDs and numbers scrubbed), classifies each error chain's leaf into
 a failure mode (timeout, auth, conflict, not_found, unsupported, bad_data, other),
-builds TF-IDF vectors from failure mode (weighted 3x) + error type + message +
-endpoint + status class, runs K-means for k = 2..8 (fixed seed, weighted by log
+builds TF-IDF vectors from the preset's focus token (weighted 3x: failure mode,
+endpoint or dependency) + failure mode + error type + message + endpoint + status class, runs K-means for k = 2..8 (fixed seed, weighted by log
 of error count), picks k by silhouette, and writes clusters with members, cause,
-top terms, endpoints and shares.
+dependency, top terms, endpoints and shares.
 
 Silhouette on this kind of data is low (0.15–0.2 is normal); judge clusters by
 whether their members share a failure mode and a story. If the best k is the
@@ -89,7 +106,8 @@ report when they're the same failure on the same endpoint.
 **4xx:** these usually have no message, so clustering only regroups endpoints.
 Prefer a short endpoint × status table for 4xx unless the user asks to cluster.
 
-Flags: `--k N` forces k; `--weight raw|log|none`; `--max-k N`.
+Flags: `--by root_cause|endpoint|dependency` (see Scope); `--k N` forces k;
+`--weight raw|log|none`; `--max-k N`.
 With fewer than 4 signatures it skips clustering and returns one group per
 signature; say so instead of pretending to have categories.
 
