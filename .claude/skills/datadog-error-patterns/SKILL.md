@@ -100,7 +100,7 @@ instead of failure mode.
 
 What it does: normalizes messages into templates (bracketed params, tokens,
 query strings, IDs and numbers scrubbed), classifies each error chain's leaf into
-a failure mode (timeout, auth, conflict, not_found, unsupported, bad_data, other),
+a failure mode (timeout, auth, conflict, not_found, unsupported, ineligible, bad_data, other),
 builds TF-IDF vectors from the preset's focus token (weighted 3x: failure mode,
 endpoint or dependency) + failure mode + error type + message + endpoint + status class, runs K-means for k = 2..8 (fixed seed, weighted by log
 of error count), picks k by silhouette, and writes clusters with members, cause,

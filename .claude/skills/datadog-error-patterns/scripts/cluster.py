@@ -73,11 +73,12 @@ def merge_rows(rows):
 
 CAUSES = [
     ("timeout", r"deadline exceeded|timeout|timed out"),
-    ("auth", r"unauthori[sz]ed|forbidden|\b401\b|\b403\b"),
+    ("auth", r"unauthori[sz]ed|unauthenticated|not authenticated|forbidden|\b401\b|\b403\b"),
     ("conflict", r"≠|already|conflict|rejecting|duplicate"),
     ("not_found", r"no rows|not found|no \w+ package for|missing"),
     ("unsupported", r"unimplemented|no \w+ inference mapping|unsupported"),
-    ("bad_data", r"unmarshal|cannot be null|empty \w+|invalid|no line items"),
+    ("ineligible", r"not [\w-]+ eligible|ineligible|switches are off"),
+    ("bad_data", r"unmarshal|cannot be null|empty \w+|invalid|no line items|unprocessable|bad request"),
 ]
 FOCUS_WEIGHT = 3  # how many times the preset's focus token is repeated in the document
 
@@ -86,7 +87,8 @@ FOCUS_WEIGHT = 3  # how many times the preset's focus token is repeated in the d
 # subscription info: query by subscription number: deadline exceeded" is a DB failure.
 DEPENDENCIES = [
     ("web_php", r"web-php|web_php|/rpc/"),
-    ("zuora", r"zuora|\bzms\b|submit order|by order"),
+    # Not "zms": it names checkout flows ("checkout zms: ..."), not a call to Zuora.
+    ("zuora", r"zuora|submit order|by order"),
     ("apple", r"appstoreapi|storekit|apple request|call apple"),
     ("google_play", r"androidpublisher|googleapis|play developer"),
     ("db", r"\bsql\b|psdb\.cloud|planetscale|begin tx|rollback|^query\b|insert \w+"),

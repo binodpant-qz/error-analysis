@@ -6,7 +6,7 @@ SCRIPT_DIR = os.path.join(HERE, "..", ".claude", "skills", "datadog-error-patter
 SCRIPT = os.path.join(SCRIPT_DIR, "cluster.py")
 sys.path.insert(0, SCRIPT_DIR)
 
-from cluster import dependency_of, template  # noqa: E402
+from cluster import cause_of, dependency_of, template  # noqa: E402
 
 
 def row(sig, ep, st, msg, n, cause=None):
@@ -99,10 +99,28 @@ def test_dependency():
     assert len(zuora) == 1 and len(db) == 1 and zuora != db, res["clusters"]
 
 
+def test_cause_of():
+    cases = {
+        "get settings view: query package by id[1]: sql: no rows in result set": "not_found",
+        "query by user id: context deadline exceeded": "timeout",
+        "user not authenticated": "auth",
+        "post request: check response for errors: zuora api error: unprocessable entity": "bad_data",
+        "patch request: check response for errors: zuora api error: bad request": "bad_data",
+        "build purchase context: user is not free-trial eligible for a trial package": "ineligible",
+        "(no message)": None,
+    }
+    for message, want in cases.items():
+        got = cause_of(template(message))
+        assert got == want, (message, got, want)
+
+
 def test_dependency_of():
     cases = {
         'get request: Get "https://rest.na.zuora.com/v1/orders": timeout exceeded': "zuora",
-        "update zms subscription: unmarshal zms data: json: cannot unmarshal bool": "zuora",
+        "checkout zms: create payment method request: post request: check response for errors: zuora api error: unprocessable entity": "zuora",
+        # "zms" names the flow; nothing here calls Zuora.
+        "checkout zms: wait: build purchase context: user is not free-trial eligible for a trial package": "internal",
+        "update zms subscription: unmarshal zms data: json: cannot unmarshal bool": "internal",
         "get: appstoreapi: /inApps/v1/subscriptions/{transactionId}: http 401: Unauthorized": "apple",
         "process update from rtdn: process update: get subscription v2: get subscription v2: context deadline exceeded": "google_play",
         'sync subscription: Post "http://web-php.hhvm.svc.cluster.local./rpc/v1/subscriptions/sync": context deadline exceeded': "web_php",
