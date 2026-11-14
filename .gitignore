@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+# analysis outputs may contain service data; keep them out of git
+signatures.json
+clusters*.json
+summary.json
