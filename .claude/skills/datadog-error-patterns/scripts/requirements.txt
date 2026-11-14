@@ -1,0 +1,3 @@
+# Requires Python >= 3.12 (numpy 2.5 and scipy 1.18 need it; scikit-learn 1.9 needs 3.11).
+scikit-learn==1.9.1
+numpy==2.5.4
