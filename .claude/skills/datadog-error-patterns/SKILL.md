@@ -82,10 +82,18 @@ file or the report. The script also scrubs IDs, emails, IPs and numbers from mes
 
 ## 3. Cluster
 
+The script needs Python 3.12 or newer. The default `python3` may be older (pyenv
+pins, macOS system Python), so find one first (`python3 --version`, then
+`python3.12`/`python3.13`/`python3.14`, then `/opt/homebrew/bin/python3`) and keep
+the packages in a virtualenv next to the script rather than the global Python:
+
 ```bash
-pip install -r scripts/requirements.txt --break-system-packages   # if needed
-python scripts/cluster.py signatures.json --status-class 5xx --by root_cause --out clusters.json
+PY=python3.14   # any python >= 3.12
+[ -x scripts/.venv/bin/python ] || { $PY -m venv scripts/.venv && scripts/.venv/bin/pip install -q -r scripts/requirements.txt; }
+scripts/.venv/bin/python scripts/cluster.py signatures.json --status-class 5xx --by root_cause --out clusters.json
 ```
+
+If no Python 3.12+ is installed, say so and stop; don't loosen the pins.
 
 Cluster 5xx and 4xx in separate runs; mixed runs split on "has message vs not"
 instead of failure mode.

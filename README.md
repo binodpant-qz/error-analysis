@@ -22,16 +22,19 @@ To use it in every project, link it into your personal skills folder:
 ```
 
 Requires a Datadog MCP connection in Claude Code (use the `/v1/mcp` endpoint)
-and Python 3 with the pinned packages:
+and Python 3.12 or newer with the pinned packages (numpy 2.5 needs 3.12). Check
+`python3 --version` first; a pyenv or system default may be older. A virtualenv
+in the repo keeps the packages out of your global Python:
 
 ```bash
-pip install -r .claude/skills/datadog-error-patterns/scripts/requirements.txt
+python3.12 -m venv .venv    # any python >= 3.12
+.venv/bin/pip install -r .claude/skills/datadog-error-patterns/scripts/requirements.txt
 ```
 
 ## Tests
 
 ```bash
-python3 tests/test_cluster.py
+.venv/bin/python tests/test_cluster.py
 ```
 
 ## Roadmap

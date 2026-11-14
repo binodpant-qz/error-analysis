@@ -59,35 +59,66 @@ group_by: {fields: ["resource_name"], limit: 10}
 computes: [{aggregation: COUNT, field: "*", output: errors}]
 ```
 
-**3. Issue-backed signatures (5xx)**
+**Group limits.** Datadog rejects an aggregation whose per-field limits multiply
+past 10,000 groups ("Cannot generate more than 10000 groups across all dimensions"),
+and a group that hits its limit silently drops the rest. Raw `@error.message` values
+contain IDs, so one issue can have 20+ distinct messages. Keep each query to two or
+three fields, set a limit per field, and check every grouped sum against the same
+filter ungrouped (query 1 split by status). Per-field limits need the SDK
+(`v2.SpansApi.aggregateSpans` through `execute_code`, `groupBy: [{facet, limit, sort}]`);
+the `aggregate_spans` tool takes one `limit` for all fields.
+
+Queries 3, 4 and 5 partition the errors (message + issue, message without issue,
+no message), so their ungrouped totals must add up to query 1's total. On
+subscriptions they did (347 + 267 + 561 = 1,175).
+
+**3. Issue-backed signatures (5xx), as two queries joined on `@issue.id`**
 ```
-query:    service:<svc> operation_name:http.server.request @http.status_code:[500 TO 599] @issue.id:*
-group_by: {fields: ["@issue.id", "resource_name", "@http.status_code", "@error.type", "@error.message"], limit: 1000}
-computes: [{aggregation: COUNT, field: "*", output: errors}]
+query:    service:<svc> operation_name:http.server.request @http.status_code:[500 TO 599] @issue.id:* @error.message:*
+3a group_by: @issue.id (50) x @error.message (150)                 -> one row per issue x message
+3b group_by: @issue.id (50) x resource_name (5) x @http.status_code (3) -> endpoint and status per issue
+computes: count
+```
+Give each 3a row the issue's top endpoint and status from 3b. Don't put all four
+fields in one query: 50 x 5 x 3 x 150 is far over the cap, and smaller limits
+truncate messages (on subscriptions, 324 of 347 spans came back).
+
+**4. Signatures with a message but no issue (4xx, and 5xx missing an issue)**
+```
+query:    service:<svc> operation_name:http.server.request @http.status_code:[400 TO 599] -@http.status_code:499 -@issue.id:* @error.message:*
+group_by: resource_name (20) x @http.status_code (3) x @error.message (100)
+computes: count
 ```
 
-**4. Signatures without an issue (4xx, and 5xx missing an issue)**
+**Error type per message (for queries 3 and 4)**
 ```
-query:    service:<svc> operation_name:http.server.request @http.status_code:[400 TO 599] -@http.status_code:499 -@issue.id:*
-group_by: {fields: ["resource_name", "@http.status_code", "@error.message"], limit: 1000}
-computes: [{aggregation: COUNT, field: "*", output: errors}]
+query:    service:<svc> operation_name:http.server.request @http.status_code:[500 TO 599] @error.message:*
+group_by: @error.message (200) x @error.type (3)
+computes: count
 ```
-**5. Errors with no message (always run; grouping in 3–4 drops these)**
+Look up `error_type` by raw message. Don't add `@error.type` to queries 3 or 4:
+spans missing it drop out of the group.
+
+**5. Errors with no message (always run; queries 3 and 4 can't see these)**
 ```
 query:    service:<svc> operation_name:http.server.request @http.status_code:[400 TO 599] -@http.status_code:499 -@error.message:*
-group_by: {fields: ["resource_name", "@http.status_code"], limit: 1000}
-computes: [{aggregation: COUNT, field: "*", output: errors}]
+group_by: resource_name (50) x @http.status_code (5)
+computes: count
 ```
 Use `"(no message)"` as the message for these rows.
 
 **6. Duration check for no-message 5xx (timeout inference)**
 ```
 query:    service:<svc> operation_name:http.server.request @http.status_code:[500 TO 599] -@error.message:*
-group_by: {fields: ["resource_name"], limit: 50}
-computes: [{aggregation: COUNT, field: "*", output: n},
-           {aggregation: P50, field: "@duration", output: p50_ns},
-           {aggregation: MIN, field: "@duration", output: min_ns}]
+group_by: resource_name (50)
+computes: count; median of @duration (p50_ns); min of @duration (min_ns)
 ```
-Don't add `@error.type` to this group_by; it's missing on these spans too.
+The SDK has no `pc50`: use `median` (`{aggregation: "median", metric: "@duration"}`).
+The `aggregate_spans` tool accepts `P50`. Don't add `@error.type` to this group_by;
+it's missing on these spans too.
 
 Drop the 4xx part of query 4 when status classes are 5xx only.
+
+**Template messages before they leave Datadog.** Messages carry user IDs, Zuora
+IDs and purchase tokens. When running these through `execute_code`, apply the
+same scrub patterns as `cluster.py` (`SCRUB`) in the script and return only templates.

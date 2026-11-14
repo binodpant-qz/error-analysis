@@ -12,6 +12,11 @@ import re
 import sys
 from collections import Counter, defaultdict
 
+# Checked before the third-party imports so an old interpreter gets this message
+# instead of a ModuleNotFoundError from a failed install.
+if sys.version_info < (3, 12):
+    sys.exit(f"cluster.py needs Python >= 3.12 (pinned numpy 2.5); this is {sys.version.split()[0]}.")
+
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
